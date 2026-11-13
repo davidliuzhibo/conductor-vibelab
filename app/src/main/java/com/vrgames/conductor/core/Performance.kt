@@ -53,6 +53,8 @@ sealed interface Ev {
     data class Early(val section: String) : Ev
     data class SwellDone(val section: String, val score: Double) : Ev
     data object Finished : Ev
+    /** A beat of the conducting hand, [onTime] when it fell with the music's beat. */
+    data class Beat(val onTime: Boolean) : Ev
 }
 
 /**
@@ -213,8 +215,11 @@ class Performance(val piece: Piece) {
                 }
             }
         }
+        conducting = maxOf(0.0, conducting - dt / CONDUCT_FADE_S)
         for (s in states.values) {
-            val want = if (s.on) s.level else 0.0
+            // The tune is always there, quietly, so the piece can be recognized before its section is
+            // brought in (2026-11-12 review: what played did not sound like the piece shown).
+            val want = if (s.on) s.level else if (s.section.id == lead) GUIDE_LEVEL else 0.0
             val step = dt * GAIN_RATE
             s.shown = if (s.shown < want) minOf(want, s.shown + step) else maxOf(want, s.shown - step)
         }
@@ -223,6 +228,35 @@ class Performance(val piece: Piece) {
             events += Ev.Finished
         }
     }
+
+    /** The section that carries the tune (the first one listed). */
+    private val lead = piece.sections.first().id
+
+    /** How much the conducting hand is keeping the beat, 0 (still) to 1; it fades without beats. */
+    var conducting = 0.0; private set
+    var beatsOnTime = 0; private set
+    var beatsGiven = 0; private set
+
+    /**
+     * The conducting hand gave a beat (the bottom of a stroke) now: on time when it falls within [BEAT_WINDOW_S] of one of
+     * the music's beats. On-time beats bring the orchestra to full; it plays a little softer when nobody conducts.
+     */
+    fun conductBeat() {
+        if (finished || time < 0) return
+        val b = beat
+        val off = abs(b - kotlin.math.round(b)) * piece.secondsPerBeat
+        val onTime = off <= BEAT_WINDOW_S
+        beatsGiven++
+        if (onTime) beatsOnTime++
+        conducting = minOf(1.0, conducting + if (onTime) 0.35 else 0.12)
+        events += Ev.Beat(onTime)
+    }
+
+    /** The whole orchestra's volume: full while conducted, softer without a hand. */
+    fun master() = 0.72 + 0.28 * conducting
+
+    /** The next section still to bring in, and how many beats until its cue (negative: it is late). */
+    fun nextEntry(): Pair<String, Double>? = judged.firstOrNull { !it.done && it.cue is Cue.Enter }?.let { it.cue.section to (it.cue.beat - beat) }
 
     /** 0 to 1 over all the cues. */
     fun accuracy(): Double = if (judged.isEmpty()) 1.0 else judged.sumOf { it.points } / judged.size
@@ -250,6 +284,10 @@ class Performance(val piece: Piece) {
         const val DEFAULT_LEVEL = 0.8
         const val SWELL_TOLERANCE = 0.35
         const val GAIN_RATE = 3.0
+        /** The tune's level before its section is brought in. */
+        const val GUIDE_LEVEL = 0.22
+        const val BEAT_WINDOW_S = 0.16
+        const val CONDUCT_FADE_S = 3.0
 
         /** Two bars of silence before the music, so the first entry can be seen coming. */
         fun countIn(p: Piece) = 2 * p.perBar * p.secondsPerBeat

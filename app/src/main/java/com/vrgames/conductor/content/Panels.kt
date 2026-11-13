@@ -152,6 +152,15 @@ fun HudPanel(c: PhysicalLengthConverter) {
         val left = ((Game.piece.seconds - (run?.time ?: 0.0)).coerceAtLeast(0.0)).toInt()
         Text(if ((run?.time ?: 0.0) < 0) "预备……" else "还有 $left 秒", fontSize = c.sz(0.02f), color = Ink)
         if (Game.freePlay) Text("自由指挥，不计分", fontSize = c.sz(0.018f), color = Sky)
+        // What comes next, in time to get ready (2026-11-12 review: the order was unclear).
+        run?.nextEntry()?.let { (id, beats) ->
+            val name = Game.piece.sections.firstOrNull { it.id == id }?.name ?: id
+            Text(if (beats > 0.5) "下一个：$name · ${kotlin.math.ceil(beats).toInt()} 拍后" else "现在：请$name 进来！", fontSize = c.sz(0.02f), color = Gold, textAlign = TextAlign.Center)
+        }
+        if (run != null && (run.time) >= 0) Text(
+            if (run.beatsGiven == 0) "空着的手上下挥，像指挥一样打拍子" else "打拍子：合拍 ${run.beatsOnTime} / ${run.beatsGiven}",
+            fontSize = c.sz(0.016f), color = if (run.conducting > 0.5) Sky else Ink, textAlign = TextAlign.Center,
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(c.m(0.008f))) {
             PlainButton(c, "重来") { Game.retry() }
             PlainButton(c, "菜单") { Game.menuOpen = true }

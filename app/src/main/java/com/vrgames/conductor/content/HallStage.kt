@@ -34,11 +34,15 @@ import com.pico.spatial.core.math.Quat
 import com.pico.spatial.core.math.Vector3
 import com.pico.spatial.tracking.DataProvider
 import com.pico.spatial.tracking.hmd.HMDTrackingProvider
+import com.pico.spatial.tracking.hand.HandJoint
+import com.pico.spatial.tracking.hand.HandTrackingProvider
+import com.vrgames.conductor.core.BeatHand
 import com.pico.spatial.ui.foundation.content.SpatialView
 import com.pico.spatial.ui.foundation.content.SpatialViewAttachments
 import com.pico.spatial.ui.foundation.content.toColor4
 import com.pico.spatial.ui.foundation.gesture.TargetEntity
 import com.pico.spatial.ui.foundation.gesture.detectSpatialDragGesture
+import com.pico.spatial.ui.foundation.gesture.detectSpatialTapGesture
 import com.pico.spatial.ui.platform.LengthUnit
 import com.pico.spatial.ui.platform.LocalPhysicalLengthConverter
 import com.pico.spatial.ui.platform.containers.LocalSpatialNavigator
@@ -72,6 +76,12 @@ fun HallStage() {
     val navigator = LocalSpatialNavigator.current
     val main = remember { Handler(Looper.getMainLooper()) }
     val head = remember { HMDTrackingProvider() }
+    // Both hands' palms, for beats conducted by the hand's own motion (2026-11-12 review).
+    val hands = remember { HandTrackingProvider() }
+    val beatHands = remember { arrayOf(BeatHand(), BeatHand()) }
+    /** When the last pinch on an instrument counted: a tap and a drag from the same pinch count once. */
+    val lastPinch = remember { LongArray(1) }
+    val handClock = remember { doubleArrayOf(0.0) }
     val subscription = remember { arrayOfNulls<Cancellable>(1) }
     var view by remember { mutableStateOf<HallView?>(null) }
     val seat = remember { Seat() }
@@ -96,10 +106,12 @@ fun HallStage() {
             Game.windowOpen = false
         }
         Game.mixer = Mixer(context.applicationContext)
+        runCatching { hands.start() }
         val hd = runCatching { head.start() }
         Log.i(TAG, "head ${hd.getOrNull() ?: hd.exceptionOrNull()?.message}")
         onDispose {
             runCatching { head.stop() }
+            runCatching { hands.stop() }
             subscription[0]?.cancel()
             Game.closeWindow()
             Game.closeWindow = {}
@@ -150,7 +162,19 @@ fun HallStage() {
     SideEffect { refresh() }
 
     SpatialView(
-        Modifier.pointerInput(Unit) {
+        Modifier.pointerInput(0) {
+            // A quick pinch that does not move comes as a tap, not a drag (2026-11-13 device test: more than eight pinches
+            // in ten on an instrument did nothing, because only drags were heard). Whichever comes first counts, once.
+            detectSpatialTapGesture(context, TargetEntity.any()) { value ->
+                val i = view?.groupOf(value.targetEntity) ?: return@detectSpatialTapGesture
+                val now = android.os.SystemClock.uptimeMillis()
+                if (now - lastPinch[0] < SAME_PINCH_MS) return@detectSpatialTapGesture
+                lastPinch[0] = now
+                Log.i(TAG, "tap group=$i phase=${Game.phase}")
+                Game.pinch(i)
+                Game.letGo(i)
+            }
+        }.pointerInput(1) {
             fun meters(px: Float) = with(density) { converter.dpToLength(px.toDp(), LengthUnit.Meters) }.toDouble()
             detectSpatialDragGesture(
                 context = context,
@@ -158,7 +182,10 @@ fun HallStage() {
                 onDragStart = { _, value ->
                     val i = view?.groupOf(value.targetEntity)
                     Log.i(TAG, "pinch group=$i phase=${Game.phase}")
+                    val now = android.os.SystemClock.uptimeMillis()
+                    if (i != null && now - lastPinch[0] < SAME_PINCH_MS) { held[0] = i; return@detectSpatialDragGesture }
                     if (i != null) {
+                        lastPinch[0] = now
                         held[0] = i
                         val run = Game.perf
                         val id = Game.piece.sections.getOrNull(i)?.id
@@ -251,6 +278,13 @@ fun HallStage() {
                 val dt = e.deltaTime.toDouble().coerceIn(0.0, 0.1)
                 val pose = runCatching { if (head.state == DataProvider.State.STARTED) head.latestData?.hmdPose else null }.getOrNull()
                 seat.frame(pose?.position, pose?.rotation, dt)
+                handClock[0] += dt
+                val hd = runCatching { if (hands.state == DataProvider.State.STARTED) hands.latestData else null }.getOrNull()
+                if (hd != null) for ((k, h) in listOf(hd.left, hd.right).withIndex()) {
+                    val palm = runCatching { h?.joint(HandJoint.Index.PALM)?.position }.getOrNull()
+                    if (palm == null) { beatHands[k].reset(); continue }
+                    if (beatHands[k].feed(handClock[0], palm.y.toDouble())) main.post { Game.handBeat() }
+                }
                 main.post { Game.tick(dt) }
             }
         },
@@ -351,3 +385,6 @@ private fun android.content.Context.findActivity(): android.app.Activity? {
     }
     return null
 }
+
+/** A tap and a drag start this close together are the same pinch. */
+private const val SAME_PINCH_MS = 350L

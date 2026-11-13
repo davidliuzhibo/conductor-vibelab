@@ -112,6 +112,7 @@ class HallView(private val models: Map<String, Entity>) {
             val t = clock * 2.2 + index
             swayer.setPos(Vector3((0.015 * sin(t * 0.6)).toFloat(), (0.03 * sin(t) + gain * 0.05 * sin(t * 3.0)).toFloat(), 0f))
             swayer.transform().eulerAngles = EulerAngles(0f, 0f, (gain * 3.5 * sin(t * 1.5)).toFloat())
+            swayer.setScale((1.0 + (if (on) 0.05 * beatPulse else 0.0)).toFloat())
             for ((k, b) in bows.withIndex()) {
                 val cur = b.transform().position
                 b.setPos(Vector3(cur.x, cur.y, 0.06f + (gain * 0.05 * sin(clock * 6.5 + k)).toFloat()))
@@ -167,12 +168,17 @@ class HallView(private val models: Map<String, Entity>) {
         groups[i].flash = if (g == Grade.PERFECT) 1.0 else 0.5
     }
 
+    /** An on-time conducting beat: every playing group answers with a little lift. */
+    private var beatPulse = 0.0
+    fun beat() { beatPulse = 1.0 }
+
     /** Every frame, with the run if one is on. */
     private var perf: Performance? = null
     fun follow(run: Performance?) { perf = run }
 
     fun update(dt: Double) {
         clock += dt
+        beatPulse = maxOf(0.0, beatPulse - dt * 4)
         sparks.update(dt)
         if (showT >= 0) {
             showT += dt

@@ -58,7 +58,8 @@ class PerformanceTest {
             run(perf)
             assertEquals(p.id, 0, perf.stars())
             assertTrue(perf.finished)
-            for (s in p.sections) assertEquals(0.0, perf.gain(s.id), 1e-9)
+            // Only the tune goes on, quietly, as a guide; the other sections stay silent.
+            for (s in p.sections) assertEquals(if (s == p.sections.first()) Performance.GUIDE_LEVEL else 0.0, perf.gain(s.id), 1e-9)
         }
     }
 
@@ -141,7 +142,8 @@ class PerformanceTest {
     @Test
     fun aSectionIsSilentUntilBroughtInAndFadesInWithoutAClick() {
         val p = Pieces.ALL[0]
-        val cue = p.cues.first() as Cue.Enter
+        // Not the tune: it plays quietly from the start (see theTuneIsAlwaysHeard).
+        val cue = p.cues.filterIsInstance<Cue.Enter>().first { it.section != p.sections.first().id }
         val perf = Performance(p)
         perf.advance(p.time(cue.beat), 0.02)
         assertEquals(0.0, perf.gain(cue.section), 1e-9)
@@ -227,5 +229,32 @@ class PerformanceTest {
     fun theWordsAvoidTheForbiddenOnes() {
         val bad = listOf("老虎机", "投币", "赌", "筹码", "奖金", "大奖", "中奖", "押注", "彩金", "赔率", "硬币", "翻倍", "彩票", "下注", "抽奖", "博彩", "轮盘")
         for (p in Pieces.ALL) for (b in bad) assertFalse(p.lore, b in p.lore + p.title + p.composer)
+    }
+
+    @Test
+    fun theTuneIsAlwaysHeard() {
+        for (p in Pieces.ALL) {
+            val perf = Performance(p)
+            perf.advance(1.0, 1.0)
+            assertEquals(p.id, Performance.GUIDE_LEVEL, perf.gain(p.sections.first().id), 1e-9)
+        }
+    }
+
+    @Test
+    fun beatsOnTheMusicsBeatBringTheOrchestraToFull() {
+        val p = Pieces.ALL[0]
+        val perf = Performance(p)
+        assertEquals(0.72, perf.master(), 1e-9)
+        // Beats right on the music's beats.
+        for (k in 1..4) { perf.advance(p.time(k.toDouble()), 0.01); perf.conductBeat() }
+        assertEquals(4, perf.beatsOnTime)
+        assertTrue(perf.master() > 0.99)
+        // A beat halfway between two beats is off time.
+        perf.advance(p.time(5.5), 0.01); perf.conductBeat()
+        assertEquals(4, perf.beatsOnTime)
+        assertEquals(5, perf.beatsGiven)
+        // Without beats it fades back.
+        perf.advance(p.time(5.5) + 10, 10.0)
+        assertEquals(0.72, perf.master(), 1e-9)
     }
 }

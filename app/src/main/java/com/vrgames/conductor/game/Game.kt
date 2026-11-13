@@ -189,6 +189,7 @@ object Game {
             }
             is Ev.Early -> say("${sectionName(e.section)}：早了一点，等光圈变亮再捏。")
             is Ev.SwellDone -> say("${sectionName(e.section)}的强弱：跟上了 ${(e.score * 100).toInt()}%")
+            is Ev.Beat -> { if (e.onTime) view?.beat() }
             Ev.Finished -> finish(run)
         }
         version++
@@ -210,6 +211,12 @@ object Game {
         view?.celebrate(resultStars)
         Log.i(TAG, "finish ${piece.id} stars=$resultStars acc=${"%.3f".format(resultAccuracy)} free=$freePlay")
         AutoPilot.finished(piece.id, resultStars, resultAccuracy)
+    }
+
+    /** A conducting beat from the stage's hand tracking. */
+    fun handBeat() {
+        if (phase != Phase.PLAYING) return
+        perf?.conductBeat()
     }
 
     fun tick(dt: Double) {
@@ -239,7 +246,7 @@ object Game {
         }
         bot?.act()
         run.advance(maxOf(now, run.time), dt)
-        for ((i, s) in run.piece.sections.withIndex()) m?.setGain(i, run.gain(s.id).toFloat() * 0.8f)
+        for ((i, s) in run.piece.sections.withIndex()) m?.setGain(i, run.gain(s.id).toFloat() * 0.8f * run.master().toFloat())
         drain(run)
     }
 
