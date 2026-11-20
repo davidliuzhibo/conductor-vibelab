@@ -17,7 +17,7 @@ import com.vrgames.conductor.core.Pieces
  * mixer's clock and the rendering, not that a pointing hand can reach a section or how late the sound feels.
  *
  * cmd: walk · piece --es id ode · begin · pinch --es id 0 · hold --es id 0,0.9 · letgo --es id 0 · grant --es id 3 · show
- * · reset · stop · view --es id "x,y,z,yaw,scale,pitch"|reset
+ * · reset · stop · view --es id "x,y,z,yaw,scale,pitch"|reset · ray · replace --es id 3 · card
  */
 object AutoPilot {
     const val ACTION = "com.vrgames.conductor.TEST"
@@ -31,7 +31,11 @@ object AutoPilot {
         if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return
         debug = true
         val receiver = object : BroadcastReceiver() {
-            override fun onReceive(c: Context, i: Intent) = command(i.getStringExtra("cmd") ?: "", i.getStringExtra("id"))
+            override fun onReceive(c: Context, i: Intent) {
+                // 2026-11-19: the menu's 退出, for the emulator test (every window of the app should go).
+                if (i.getStringExtra("cmd") == "quit") { android.util.Log.i(TAG, "cmd quit"); com.vrgames.conductor.platform.AppExit.finishAll(c) }
+                else command(i.getStringExtra("cmd") ?: "", i.getStringExtra("id"))
+            }
         }
         ContextCompat.registerReceiver(context.applicationContext, receiver, IntentFilter(ACTION), ContextCompat.RECEIVER_EXPORTED)
         Log.i(TAG, "ready")
@@ -51,6 +55,12 @@ object AutoPilot {
             "grant" -> Game.grant(id?.toIntOrNull() ?: 3)
             "show" -> Game.show()
             "view" -> Game.debugView = id?.takeIf { it != "reset" }
+            // v0.3.2: rays from the eyes through the title card's buttons; logs whether a pinchable instrument is in the way.
+            "ray" -> com.vrgames.conductor.content.debugRays()
+            // v0.3.2: measure the eye height again (core.EyeHeight), the head reading zeros for the first id seconds.
+            "replace" -> com.vrgames.conductor.content.debugReplace(id?.toDoubleOrNull() ?: 0.0)
+            // The title card again (to test its buttons).
+            "card" -> { stop(); Game.toCard() }
             "reset" -> { stop(); Game.wipe() }
             "stop" -> stop()
             else -> Log.w(TAG, "unknown command $cmd")

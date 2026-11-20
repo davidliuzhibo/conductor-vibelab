@@ -68,6 +68,20 @@ class Performance(val piece: Piece) {
         var level = DEFAULT_LEVEL
         var holding = false
         var shown = 0.0
+        /** How long it has been held (seconds), for the solo. */
+        var heldFor = 0.0
+    }
+
+    /**
+     * v0.3 (PICO 1117: 「里边的乐器模型只是个展示，无法交互」): hold a playing section for [SOLO_AFTER] seconds and it takes
+     * a solo — it plays out louder and the others drop back — until the fingers part. The section soloing now, or null.
+     */
+    fun solo(): String? = states.values.firstOrNull { it.holding && it.on && it.heldFor >= SOLO_AFTER }?.section?.id
+
+    /** The gain factor for [section] while someone solos: up for the soloist, well back for the rest. */
+    fun soloFactor(section: String): Double {
+        val s = solo() ?: return 1.0
+        return if (s == section) SOLO_UP else SOLO_DOWN
     }
 
     private class Judged(val cue: Cue) {
@@ -189,6 +203,7 @@ class Performance(val piece: Piece) {
     }
 
     fun advance(now: Double, dt: Double) {
+        for (s in states.values) s.heldFor = if (s.holding) s.heldFor + dt else 0.0
         if (finished) return
         time = now
         for (j in judged) {
@@ -290,6 +305,10 @@ class Performance(val piece: Piece) {
         const val CONDUCT_FADE_S = 3.0
 
         /** Two bars of silence before the music, so the first entry can be seen coming. */
+        /** Held this long, a playing section takes a solo. */
+        const val SOLO_AFTER = 0.6
+        const val SOLO_UP = 1.3
+        const val SOLO_DOWN = 0.3
         fun countIn(p: Piece) = 2 * p.perBar * p.secondsPerBeat
     }
 }

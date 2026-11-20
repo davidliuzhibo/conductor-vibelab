@@ -55,6 +55,11 @@ class HallView(private val models: Map<String, Entity>) {
         val marker = model(MeshResource.createBox(Vector3(0.09f, 0.012f, 0.03f)), marker0)
         var flash = 0.0
         var state = -1
+        /** v0.3: each player and how it stands at rest, so it can play (bow, blow, pluck, strike) round that. */
+        val players = ArrayList<Triple<Entity, Instrument, Pair<Vector3, FloatArray>>>()
+        /** A beam of light from above while the section solos. */
+        val spot = model(MeshResource.createCone(2.2f, 0.55f), glow(color(1f, 0.92f, 0.7f, 0.16f)).apply { setCullingMode(com.pico.spatial.core.ecs.resource.MaterialCullingMode.NONE) }).apply { enabled = false }
+        var spotK = 0.0
 
         init {
             val a = Math.toRadians(ANGLES[index])
@@ -69,23 +74,29 @@ class HallView(private val models: Map<String, Entity>) {
             marker.setPos(Vector3(0.5f, 0.3f, 0f))
             marker.enabled = false
             node.addChild(marker)
+            spot.setPos(Vector3(0f, 1.25f, 0f))
+            node.addChild(spot)
             node.components.set(CollisionComponent(listOf(ShapeResource.createBox(Vector3(0.95f, 1.05f, 0.7f)).offsetByTranslation(Vector3(0f, 0.42f, 0f))), PhysicsMaterialResource()))
             node.components.set(InteractableComponent())
             node.components.set(HoverEffectComponent())
+            node.setName("section$index")
             root.addChild(node)
         }
 
         fun fill(names: List<Instrument>) {
             swayer.getChildren().toList().forEach { swayer.removeChild(it) }
             bows.clear()
+            players.clear()
             names.forEachIndexed { k, ins ->
                 val m = models[ins.model]?.clone(Entity.CloneOptions(true, true)) ?: model(MeshResource.createBox(Vector3(0.2f, ins.size, 0.1f)), pbr(color(0.6f, 0.4f, 0.2f), 0.3f, 0.5f))
                 m.setScale(if (models[ins.model] != null) ins.size else 1f)
                 val spread = names.size - 1
                 val dx = if (spread == 0) 0f else (k - spread / 2f) * ins.gap
                 m.setPos(Vector3(dx, ins.lift + (if (k % 2 == 0) 0f else 0.04f), if (k % 2 == 0) 0f else -0.12f))
-                m.transform().eulerAngles = EulerAngles(ins.pitch, ins.yaw + (if (spread == 0) 0f else (k - spread / 2f) * -8f), ins.roll)
+                val rest = floatArrayOf(ins.pitch, ins.yaw + (if (spread == 0) 0f else (k - spread / 2f) * -8f), ins.roll)
+                m.transform().eulerAngles = EulerAngles(rest[0], rest[1], rest[2])
                 swayer.addChild(m)
+                players += Triple(m, ins, m.transform().position to rest)
                 if (ins.bowed) {
                     val bow = model(MeshResource.createCylinder(ins.size * 0.8f, 0.004f), pbr(color(0.25f, 0.15f, 0.08f), 0.2f, 0.5f))
                     bow.transform().eulerAngles = EulerAngles(0f, 0f, 70f)
@@ -103,8 +114,13 @@ class HallView(private val models: Map<String, Entity>) {
             halo.components[ModelComponent::class.java]?.materials?.let { it[0] = when (state) { 1 -> haloOn; 2 -> haloWant; 3 -> haloHold; 4 -> haloReady; else -> haloOff } }
         }
 
-        fun update(dt: Double, gain: Double, levelNow: Double, want: Boolean, holding: Boolean, on: Boolean, target: Double?, due: Boolean = want) {
+        fun update(dt: Double, gain: Double, levelNow: Double, want: Boolean, holding: Boolean, on: Boolean, target: Double?, due: Boolean = want, solo: Boolean = false) {
             flash = maxOf(0.0, flash - dt)
+            // The solo's beam fades in and out.
+            spotK = (spotK + (if (solo) dt else -dt) * 3).coerceIn(0.0, 1.0)
+            spot.enabled = spotK > 0.01
+            if (spot.enabled) spot.transform().setScaleVector(Vector3((0.6 + 0.4 * spotK).toFloat(), 1f, (0.6 + 0.4 * spotK).toFloat()))
+            play(gain * (if (solo) 1.6 else 1.0))
             // Dim gold while the cue is coming, bright gold with a quick pulse when it is time to pinch.
             show(if (holding) 3 else if (due) 2 else if (want) 4 else if (on) 1 else 0)
             val breath = if (due) 1f + 0.18f * sin(clock * 9).toFloat() else if (want) 1f + 0.05f * sin(clock * 3).toFloat() else 1f
@@ -129,6 +145,75 @@ class HallView(private val models: Map<String, Entity>) {
         }
     }
 
+    /**
+     * v0.3 (PICO 1117: 「乐器模型只是个展示」): every instrument plays while its section sounds, as loud as it sounds — the
+     * bowed strings rock under the bow, the winds lift and dip with the phrase, the plucked strings shiver on each beat,
+     * the drums jump on the beat — and notes rise from it in its section's colour.
+     */
+    private fun Group.play(g: Double) {
+        val a = g.coerceIn(0.0, 1.6)
+        for ((k, p) in players.withIndex()) {
+            val (e, ins, rest) = p
+            val (pos, rot) = rest
+            val ph = clock * 2 * Math.PI * beatHz + k * 0.7
+            var dx = 0.0; var dy = 0.0; var rx = 0.0; var rz = 0.0; var sy = 1.0
+            when (ins.model) {
+                "violin", "cello" -> { rz = 5 * a * sin(ph * 0.5); dy = 0.01 * a * sin(ph) }
+                "flute", "dizi", "trumpet" -> { rx = 6 * a * sin(ph * 0.25); dy = 0.025 * a * sin(ph * 0.25) }
+                "clarinet", "horn" -> { rx = 5 * a * sin(ph * 0.25 + 1); dy = 0.02 * a * sin(ph * 0.25) }
+                "pipa", "guzheng", "harp" -> { sy = 1 + 0.025 * a * beatPulse; dx = 0.003 * a * sin(clock * 60 + k) * beatPulse }
+                "drum", "timpani" -> { dy = -0.03 * a * beatPulse; sy = 1 - 0.06 * a * beatPulse }
+            }
+            e.setPos(Vector3((pos.x + dx).toFloat(), (pos.y + dy).toFloat(), pos.z))
+            e.transform().eulerAngles = EulerAngles((rot[0] + rx).toFloat(), rot[1], (rot[2] + rz).toFloat())
+            if (sy != 1.0) e.transform().setScaleVector(Vector3(ins.size, (ins.size * sy).toFloat(), ins.size)) else e.setScale(ins.size)
+        }
+        // Notes rising from a playing section.
+        if (a > 0.15 && (clock * (2 + 3 * a)).toInt() != ((clock - 0.016) * (2 + 3 * a)).toInt()) emitNote(index, node.transform().position)
+    }
+
+    /** Beats per second of the piece being played (for the players' motion). */
+    private val beatHz get() = piece?.let { 1.0 / it.secondsPerBeat } ?: 1.5
+    private val noteMats = listOf(color(1f, 0.82f, 0.4f), color(0.6f, 0.9f, 1f), color(1f, 0.6f, 0.75f), color(0.65f, 1f, 0.7f)).map { c ->
+        val n = 96
+        val b = android.graphics.Bitmap.createBitmap(n, n, android.graphics.Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(b).drawText("♪", n / 2f, n / 2f + 30f, android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE; textAlign = android.graphics.Paint.Align.CENTER; textSize = 86f
+        })
+        com.pico.spatial.core.ecs.resource.UnlitMaterial.create(com.pico.spatial.core.ecs.resource.BlendingMode.ADD).apply {
+            setBaseColorTexture(com.pico.spatial.core.ecs.resource.TextureResource.create(b)); setBaseColor(c)
+            setCullingMode(com.pico.spatial.core.ecs.resource.MaterialCullingMode.NONE)
+        }.shared()
+    }
+    private val noteMesh = MeshResource.createPlane(0.09f, 0.09f, 0f).shared()
+    private class Note(val e: Entity, var age: Double = -1.0, var vx: Double = 0.0)
+    private val notes = ArrayList<Note>()
+    private var noteNext = 0
+
+    private fun emitNote(section: Int, at: Vector3) {
+        if (notes.isEmpty()) repeat(28) { notes += Note(model(noteMesh, noteMats[0]).also { it.enabled = false; root.addChild(it) }) }
+        val n = notes[noteNext]
+        noteNext = (noteNext + 1) % notes.size
+        n.e.components[ModelComponent::class.java]?.materials?.let { it[0] = noteMats[section % noteMats.size] }
+        n.age = 0.0
+        n.vx = (Math.random() - 0.5) * 0.2
+        n.e.setPos(Vector3(at.x + ((Math.random() - 0.5) * 0.5).toFloat(), at.y + 0.7f, at.z))
+        n.e.enabled = true
+    }
+
+    private fun updateNotes(dt: Double) {
+        for (n in notes) {
+            if (n.age < 0) continue
+            n.age += dt
+            if (n.age > 2.2) { n.age = -1.0; n.e.enabled = false; continue }
+            val p = n.e.transform().position
+            n.e.setPos(Vector3((p.x + n.vx * dt).toFloat(), (p.y + 0.22 * dt).toFloat(), p.z))
+            // Faces the podium (the player) and fades by shrinking.
+            n.e.transform().eulerAngles = EulerAngles(0f, Math.toDegrees(kotlin.math.atan2(-p.x.toDouble(), -p.z.toDouble())).toFloat() + 180f, (15 * sin(n.age * 4)).toFloat())
+            n.e.setScale((1 - n.age / 2.2).toFloat().coerceAtLeast(0.05f))
+        }
+    }
+
     // These must exist before the groups are built.
     private val haloOff0 get() = glow(color(0.5f, 0.45f, 0.4f, 0.3f))
     private val levelOn0 get() = glow(color(1f, 0.82f, 0.45f, 0.95f))
@@ -142,12 +227,27 @@ class HallView(private val models: Map<String, Entity>) {
             it.setPos(Vector3(0f, -0.04f, -0.05f))
             root.addChild(it)
         }
-        models["stand"]?.clone(Entity.CloneOptions(true, true))?.let {
-            it.setScale(1.0f)
-            it.setPos(Vector3(0f, 0f, -0.62f))
-            root.addChild(it)
-        }
+        // v0.3.2: the brass music stand (its plaque stood in front of the podium) is gone, at the user's request.
     }
+
+    private var pinchOn = true
+
+    /**
+     * v0.3.2 (device 2026-11-19: 「开始第 1 首」「选曲和奖杯」 could not be pinched): whether the instrument groups take
+     * pinches. Their pinch boxes (0.95 x 1.05 m) stand right behind the title card, so the eyes' pinch went to them and
+     * not to the card's buttons. Only while a piece is played do they take pinches; their colliders stay (as in 编钟 0.2.3).
+     */
+    fun pinchable(on: Boolean) {
+        if (on == pinchOn) return
+        pinchOn = on
+        for (g in groups) {
+            if (on) g.node.components.set(InteractableComponent())
+            else g.node.components.remove(InteractableComponent::class.java)
+        }
+        android.util.Log.i("HallView", "instruments pinchable=$on")
+    }
+
+    val isPinchable get() = pinchOn
 
     fun groupOf(e: Entity?): Int? {
         var x = e
@@ -180,6 +280,7 @@ class HallView(private val models: Map<String, Entity>) {
         clock += dt
         beatPulse = maxOf(0.0, beatPulse - dt * 4)
         sparks.update(dt)
+        updateNotes(dt)
         if (showT >= 0) {
             showT += dt
             groups.forEachIndexed { i, g -> g.update(dt, 0.9 + 0.1 * sin(showT + i), 0.9, false, false, true, null) }
@@ -198,7 +299,7 @@ class HallView(private val models: Map<String, Entity>) {
                 val w = run.wants(s.id)
                 val swelling = w is Cue.Swell
                 val asking = w != null && !(swelling && run.isHolding(s.id))
-                groups[i].update(dt, run.gain(s.id), run.level(s.id), asking, run.isHolding(s.id), run.isOn(s.id), run.swellTarget(s.id), asking && run.due(s.id) != null)
+                groups[i].update(dt, run.gain(s.id), run.level(s.id), asking, run.isHolding(s.id), run.isOn(s.id), run.swellTarget(s.id), asking && run.due(s.id) != null, run.solo() == s.id)
             }
         }
     }

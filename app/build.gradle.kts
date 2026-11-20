@@ -14,8 +14,8 @@ android {
         applicationId = "com.vrgames.conductor"
         minSdk = 35
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.2.1"
+        versionCode = 7
+        versionName = "0.3.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters.add("arm64-v8a") }

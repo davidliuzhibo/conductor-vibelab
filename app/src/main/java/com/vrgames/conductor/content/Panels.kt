@@ -157,6 +157,11 @@ fun HudPanel(c: PhysicalLengthConverter) {
             val name = Game.piece.sections.firstOrNull { it.id == id }?.name ?: id
             Text(if (beats > 0.5) "下一个：$name · ${kotlin.math.ceil(beats).toInt()} 拍后" else "现在：请$name 进来！", fontSize = c.sz(0.02f), color = Gold, textAlign = TextAlign.Center)
         }
+        // v0.3: the solo, and how to call one.
+        if (run != null && run.time >= 0) {
+            val solo = run.solo()?.let { id -> Game.piece.sections.firstOrNull { it.id == id }?.name ?: id }
+            Text(if (solo != null) "$solo 独奏中 · 松手回到合奏" else "捏住正在演奏的乐器不放，它就独奏", fontSize = c.sz(0.016f), color = if (solo != null) Gold else Ink, textAlign = TextAlign.Center)
+        }
         if (run != null && (run.time) >= 0) Text(
             if (run.beatsGiven == 0) "空着的手上下挥，像指挥一样打拍子" else "打拍子：合拍 ${run.beatsOnTime} / ${run.beatsGiven}",
             fontSize = c.sz(0.016f), color = if (run.conducting > 0.5) Sky else Ink, textAlign = TextAlign.Center,
@@ -265,6 +270,7 @@ fun MenuPanel(c: PhysicalLengthConverter, openPieces: () -> Unit, faceMe: () -> 
 /** 选曲和奖杯: every piece with its stars, by chapter. */
 @Composable
 fun PiecesWindow() {
+    com.vrgames.conductor.platform.AppExit.CloseWithStage(LEVELS_ID)
     Game.version
     val p = Game.progress
     val chapters = listOf("入门", "强弱", "合奏", "东方")

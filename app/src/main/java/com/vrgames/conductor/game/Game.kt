@@ -246,7 +246,7 @@ object Game {
         }
         bot?.act()
         run.advance(maxOf(now, run.time), dt)
-        for ((i, s) in run.piece.sections.withIndex()) m?.setGain(i, run.gain(s.id).toFloat() * 0.8f * run.master().toFloat())
+        for ((i, s) in run.piece.sections.withIndex()) m?.setGain(i, (run.gain(s.id) * run.soloFactor(s.id)).toFloat().coerceAtMost(1.25f) * 0.8f * run.master().toFloat())
         drain(run)
     }
 
